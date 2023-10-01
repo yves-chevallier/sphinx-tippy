@@ -197,13 +197,14 @@ class TippyPageData(TypedDict):
     refs_in_page: set[tuple[None | str, None | str]]
     id_to_html: dict[str | None, str]
     custom_in_page: set[str]
-    wiki_titles: set[str]
+    wiki_titles: set[tuple(str, str)]  # language, title
     dois: set[str]
     rtd_urls: set[str]
     js_path: Path
 
 
-WIKI_PATH = "https://en.wikipedia.org/wiki/"
+WIKI_PATH = re.compile(r"^https://(?P<language>\w{2}).wikipedia.org/wiki/(?P<title>.*)$")
+WIKI_PLACEHOLDER = "https://%s.wikipedia.org/wiki/%s"
 DOI_PATH = "https://doi.org/"
 
 
@@ -245,7 +246,7 @@ def collect_tips(
     anchor: Tag
     refs_in_page: set[tuple[None | str, str | None]] = set()
     custom_in_page: set[str] = set()
-    wiki_titles: set[str] = set()
+    wiki_titles: set[tuple(str, str)] = set()
     doi_names: set[str] = set()
     rtd_urls: set[str] = set()
     for anchor in body.find_all("a", {"href": True}):
@@ -286,8 +287,9 @@ def collect_tips(
             refs_in_page.add((None, target))
             continue
 
-        if tippy_config.enable_wikitips and path.startswith(WIKI_PATH):
-            wiki_titles.add(path[len(WIKI_PATH) :])
+        match = WIKI_PATH.search(path)
+        if tippy_config.enable_wikitips and match:
+            wiki_titles.add((match.group("title"), match.group("language")))
             continue
 
         # check if the reference is on another local page
@@ -471,10 +473,10 @@ def rewrite_local_attrs(content: str, rel_path: str) -> str:
     return str(soup)
 
 
-def generate_wikipedia_tooltip(title: str) -> str:
+def generate_wikipedia_tooltip(title: str, language: str) -> str:
     """Generate a wikipedia tooltip, from a title."""
 
-    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+    url = f"https://{language}.wikipedia.org/api/rest_v1/page/summary/{title}"
     data = requests.get(url).json()
 
     extract_html = data["extract_html"]
@@ -638,10 +640,14 @@ def write_tippy_props_page(
     selector_to_html: dict[str, str] = {}
     for wiki_title in data["wiki_titles"]:
         if wiki_title in wiki_cache:
-            selector_to_html[f'a[href="{WIKI_PATH}{wiki_title}"]'] = wiki_cache[
+            selector_to_html[
+                f'a[href="{WIKI_PLACEHOLDER}"]' % wiki_title
+            ] = wiki_cache[
                 wiki_title
             ]
-            selector_to_html[f'a[href^="{WIKI_PATH}{wiki_title}#"]'] = wiki_cache[
+            selector_to_html[
+                f'a[href^="{WIKI_PLACEHOLDER}#"]' % wiki_title
+            ] = wiki_cache[
                 wiki_title
             ]
     for doi in data["dois"]:
